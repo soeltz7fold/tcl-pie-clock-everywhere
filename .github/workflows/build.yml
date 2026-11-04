@@ -2,54 +2,32 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, tcl-clock-accuracy ]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
           java-version: '17'
+          distribution: 'temurin'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '8.9'
-
-      - name: Configure persistent debug signing
-        env:
-          CLOCK_DEBUG_KEYSTORE_B64: ${{ secrets.CLOCK_DEBUG_KEYSTORE_B64 }}
-          CLOCK_DEBUG_STORE_PASSWORD: ${{ secrets.CLOCK_DEBUG_STORE_PASSWORD }}
-          CLOCK_DEBUG_KEY_ALIAS: ${{ secrets.CLOCK_DEBUG_KEY_ALIAS }}
-          CLOCK_DEBUG_KEY_PASSWORD: ${{ secrets.CLOCK_DEBUG_KEY_PASSWORD }}
-        run: |
-          test -n "$CLOCK_DEBUG_KEYSTORE_B64" || (echo "Missing CLOCK_DEBUG_KEYSTORE_B64 repository secret" && exit 1)
-          mkdir -p "$RUNNER_TEMP/clock-signing"
-          printf '%s' "$CLOCK_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/clock-signing/debug.keystore"
-          echo "CLOCK_DEBUG_KEYSTORE_PATH=$RUNNER_TEMP/clock-signing/debug.keystore" >> "$GITHUB_ENV"
-          echo "CLOCK_DEBUG_STORE_PASSWORD=$CLOCK_DEBUG_STORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "CLOCK_DEBUG_KEY_ALIAS=$CLOCK_DEBUG_KEY_ALIAS" >> "$GITHUB_ENV"
-          echo "CLOCK_DEBUG_KEY_PASSWORD=$CLOCK_DEBUG_KEY_PASSWORD" >> "$GITHUB_ENV"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
-      - name: Rename debug APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/clock-everywhere-1.0.0-debug.apk
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v7
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: clock-everywhere-1.0.0-debug
-          path: app/build/outputs/apk/debug/clock-everywhere-1.0.0-debug.apk
-          if-no-files-found: error
+          name: clock-everywhere-true-time-debug
+          path: app/build/outputs/apk/debug/app-debug.apk   
