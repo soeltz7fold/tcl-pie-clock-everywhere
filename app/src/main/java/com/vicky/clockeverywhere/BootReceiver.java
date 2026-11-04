@@ -7,6 +7,8 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.provider.Settings;
 import android.util.Log;
+//import android.os.Handler;
+//import android.os.Looper;
 
 public class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "ClockEverywhereBoot";
@@ -15,7 +17,8 @@ public class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         String action = intent != null ? intent.getAction() : null;
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
-                && !Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)) {
+                && !Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)
+                && !Intent.ACTION_USER_PRESENT.equals(action)) {
             return;
         }
 
@@ -33,17 +36,26 @@ public class BootReceiver extends BroadcastReceiver {
             return;
         }
 
-        Intent serviceIntent = new Intent(context, ClockOverlayService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-                Log.i(TAG, "Requested foreground clock service at boot");
-            } else {
-                context.startService(serviceIntent);
-                Log.i(TAG, "Requested clock service at boot");
+        // Delay 45s to let TCL display/WindowManager initialize
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this.intentHandler(context), 45000);
+
+
+    }
+
+    private Runnable intentHandler(final Context context) {
+        return () -> {
+            Intent serviceIntent = new Intent(context, ClockOverlayService.class);
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent);
+                    Log.i(TAG, "Requested foreground clock service at boot");
+                } else {
+                    context.startService(serviceIntent);
+                    Log.i(TAG, "Requested clock service at boot");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Unable to start clock service at boot", e);
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Unable to start clock service at boot", e);
-        }
+        };
     }
 }
