@@ -20,7 +20,10 @@ import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import java.net.DatagramPacket;
+import java.net.InetAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -64,6 +67,9 @@ public class ClockOverlayService extends Service {
     private long referenceElapsed = 0;
     private long lastNtpCheck = 0;
 
+    private static final String NTP_HOST = "time.google.com";
+    private String lastKnownTz = TimeZone.getDefault().getID();
+
     private final Runnable ticker = new Runnable() {
         @Override
         public void run() {
@@ -104,18 +110,28 @@ public class ClockOverlayService extends Service {
              */
             long atNow = referenceWallTime + (SystemClock.elapsedRealtime() - referenceElapsed);
 
-            /// Resync: if system clock is AHEAD of our calculated time,
-            // it was wrong when we captured the reference — update it
-            long systemNow = System.currentTimeMillis();
-            if (systemNow > atNow + 5000) {
-                // System clock was wrong at capture, now fixed	systemNow > atNow + 5s	Resync to correct system time
-                referenceWallTime = systemNow;
-                referenceElapsed = SystemClock.elapsedRealtime();
-                atNow = systemNow;
-            }
+            /// below is NTP resync every 5 minutes (independent of system clock)
+//            if (SystemClock.elapsedRealtime() - lastNtpCheck > 300_000) {
+//                lastNtpCheck = SystemClock.elapsedRealtime(); new Thread(queryNtpThread).start();
+//            }
 
-            /// NTP resync every 5 minutes (independent of system clock)
-            if (SystemClock.elapsedRealtime() - lastNtpCheck > 300_000) {
+            long systemNow = System.currentTimeMillis();
+            String currentTz = TimeZone.getDefault().getID();
+            boolean clockJumped = systemNow > atNow + 5000;
+            boolean tzChanged = !currentTz.equals(lastKnownTz);
+            if (clockJumped || tzChanged) {
+                if (clockJumped) {
+                    referenceWallTime = systemNow;
+                    referenceElapsed = SystemClock.elapsedRealtime();
+                    atNow = systemNow;
+                }
+                if (tzChanged) lastKnownTz = currentTz;
+
+                lastNtpCheck = SystemClock.elapsedRealtime();
+                new Thread(queryNtpThread).start();
+            }
+            // Keep a fallback (e.g. every 30 min) in case the jump is small:
+            else if (SystemClock.elapsedRealtime() - lastNtpCheck > 1_800_000) {
                 lastNtpCheck = SystemClock.elapsedRealtime();
                 new Thread(queryNtpThread).start();
             }
@@ -125,8 +141,8 @@ public class ClockOverlayService extends Service {
 
             // Timezone in smaller text
             if (prefs.getBoolean(KEY_SHOW_TZ, false) && tzView != null) {
-                SimpleDateFormat tzFormat = new SimpleDateFormat("z", Locale.getDefault());
-                tzFormat.setTimeZone(TimeZone.getTimeZone(zoneId));
+//                SimpleDateFormat tzFormat = new SimpleDateFormat("z", Locale.getDefault());
+//                tzFormat.setTimeZone(TimeZone.getTimeZone(zoneId));
                 SimpleDateFormat tzFmt = new SimpleDateFormat("X", Locale.getDefault());
                 tzFmt.setTimeZone(TimeZone.getTimeZone(zoneId));
                 String tz = tzFmt.format(new Date(atNow));
@@ -152,7 +168,10 @@ public class ClockOverlayService extends Service {
                         if (Math.abs(ntpTime - currentAtNow) > 2000) {
                             referenceWallTime = ntpTime;
                             referenceElapsed = SystemClock.elapsedRealtime();
-                            android.util.Log.i("ClockOverlayService", "NTP resync: " + new Date(ntpTime));
+
+                            String ntpDate = "NTP resync: " + new Date(ntpTime);
+                            android.util.Log.i("ClockOverlayService", ntpDate);
+                            Toast.makeText(getApplicationContext(), ntpDate, Toast.LENGTH_SHORT).show();
                         }
                     });
                 }
@@ -216,7 +235,7 @@ public class ClockOverlayService extends Service {
             usageView.setShadowLayer(4f, 2f, 2f, Color.BLACK);
             usageView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
             usageView.setSingleLine(true);
-            usageView.setMaxWidth(dp(700));
+            usageView.setMaxWidth(atDp(700));
             usageView.setEllipsize(android.text.TextUtils.TruncateAt.END);
             usageView.setVisibility(android.view.View.GONE);
             usageView.setClickable(false);
@@ -243,10 +262,10 @@ public class ClockOverlayService extends Service {
 
             android.graphics.drawable.GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.argb(80, 0, 0, 0));
-            bg.setCornerRadius(dp(20));
+            bg.setCornerRadius(atDp(20));
             clockContainer.setBackground(bg);
             // change to dp
-            clockContainer.setPadding(dp(12), dp(4), dp(12), dp(4));
+            clockContainer.setPadding(atDp(12), atDp(4), atDp(12), atDp(4));
 
             clockView.setClickable(false);
             clockView.setFocusable(false);
@@ -258,7 +277,7 @@ public class ClockOverlayService extends Service {
             tzView.setTextColor(Color.WHITE);
             tzView.setTextSize(12);
             tzView.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
-            tzView.setPadding(dp(4), 0, dp(0), dp(0));
+            tzView.setPadding(atDp(4), 0, atDp(0), 0);
             tzView.setClickable(false);
             tzView.setFocusable(false);
 
@@ -299,23 +318,24 @@ public class ClockOverlayService extends Service {
         try {
             java.net.DatagramSocket socket = new java.net.DatagramSocket();
             socket.setSoTimeout(3000);
-            byte[] buffer = new byte[48];
-            buffer[0] = 0x1B; // NTP request
-            java.net.DatagramPacket packet = new java.net.DatagramPacket(buffer, buffer.length, java.net.InetAddress.getByName("time.google.com"), 123);
-            socket.send(packet);
-            java.net.DatagramPacket response = new java.net.DatagramPacket(buffer, buffer.length);
-            socket.receive(response);
+
+            byte[] reqBuf = new byte[48];
+            reqBuf[0] = 0x1B;
+            byte[] respBuf = new byte[48];
+            socket.send(new DatagramPacket(reqBuf, reqBuf.length, InetAddress.getByName(NTP_HOST), 123));
+            DatagramPacket received = new DatagramPacket(respBuf, respBuf.length);
+            socket.receive(received);
             socket.close();
 
             // Ntp Logger
-            android.util.Log.i("QueryNtp", "Response from: " + response.getAddress().getHostAddress()
-                    + ", length: " + response.getLength());
-            android.util.Log.w("QueryNtp", "Raw bytes: " + java.util.Arrays.toString(response.getData()));
+            android.util.Log.i("QueryNtp", "Response from: " + received.getAddress().getHostAddress()
+                    + ", length: " + received.getLength());
+            android.util.Log.w("QueryNtp", "Raw bytes: " + java.util.Arrays.toString(respBuf));
 
 
             // Parse transmit timestamp (bytes 40-43 = seconds, 44-47 = fraction)
             long seconds = 0;
-            for (int i = 40; i < 44; i++) seconds = (seconds << 8) | (buffer[i] & 0xFF);
+            for (int i = 40; i < 44; i++) seconds = (seconds << 8) | (respBuf[i] & 0xFF);
             // NTP epoch (1900) → Unix epoch (1970): subtract 2208988800
             return (seconds - 2208988800L) * 1000;
         } catch (Exception e) {
@@ -358,7 +378,7 @@ public class ClockOverlayService extends Service {
                 usage = usageRepository.loadForegroundUsageToday();
                 today = usageRepository.loadToday();
             } catch (RuntimeException e) {
-                android.util.Log.w("ClockOverlayService", "Could not refresh foreground app usage.", e);
+                android.util.Log.e("ClockOverlayService", "Could not refresh foreground app usage.", e);
                 usage = null;
                 today = null;
             }
@@ -413,7 +433,7 @@ public class ClockOverlayService extends Service {
         }
     }
 
-    private int dp(int value) {
+    private int atDp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
